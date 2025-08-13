@@ -4,3 +4,4 @@ discord-webhook    # for DiscordWebhook
 pytesseract        # for pytesseract
 diffimg            # for diff
 loguru             # for logger
+numpy

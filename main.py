@@ -30,7 +30,7 @@ logger.add(
     level=LOG_LEVEL,
 )
 
-who = os.path.splitext(os.path.basename(__file__))[0]
+who = "Extinction 9418"
 
 # Set DPI awareness
 # Last OCR text for TRIBES header (for debug prints)
@@ -1503,7 +1503,7 @@ def main_loop():
                     unix_ts = int(time.time())
                     msg = f"<t:{unix_ts}:T>"
                     if send_alert(msg, image_path=image_path):
-                        logger.info("âœ“ Sent tribelog screenshot update")
+                        logger.info("✓ Sent tribelog screenshot update")
                     else:
                         logger.error("âœ— Failed to send tribelog screenshot update")
                 else:
