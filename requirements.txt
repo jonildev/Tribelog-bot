@@ -1,0 +1,6 @@
+pywin32            # for win32gui, win32ui
+pillow             # for PIL
+discord-webhook    # for DiscordWebhook
+pytesseract        # for pytesseract
+diffimg            # for diff
+loguru             # for logger
