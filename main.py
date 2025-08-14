@@ -16,6 +16,7 @@ from typing import List, Optional
 from pathlib import Path
 import hashlib
 import json
+import difflib
 
 # Simple ARK bot
 
@@ -30,7 +31,11 @@ logger.add(
     level=LOG_LEVEL,
 )
 
-who = "Extinction 9418"
+who = "WindowLickers"
+# Dynamically detect 'who' from map area OCR once per run
+WHO_LOCKED = False  # Set to True after successful OCR assignment
+# Base coordinates for the map area that contains the desired label/name
+MAP_AREA_BASE_RECT = (350, 334, 524, 378)  # (left, top, right, bottom)
 
 # Set DPI awareness
 # Last OCR text for TRIBES header (for debug prints)
@@ -762,8 +767,11 @@ def create_log_report(img):
         # Extend bottom for context
         bottom = min(img.height, bottom + int(round(250 * _scale(img)[1])))
         log_report_area = img.crop((left, top, right, bottom))
-        log_report_area.save("log_report.png")
-        return "log_report.png"
+
+        # Save into debug_screens folder and return that path
+        save_debug_image(log_report_area, "log_report", keep_only_latest=True)
+        out_path = DEBUG_DIR / "log_report.png"
+        return str(out_path)
     except Exception as e:
         logger.debug(f"create_log_report failed: {e}")
         return None
@@ -806,6 +814,11 @@ def debug_ocr_region(img):
         # Scroll slider area (right edge of log)
         slider_rect = srect(img, 1168, 210, 1184, 290)
         draw.rectangle(slider_rect, outline="yellow", width=2)
+
+        # Map area used to OCR 'who'
+        map_rect = srect(img, *MAP_AREA_BASE_RECT)
+        draw.rectangle(map_rect, outline="white", width=2)
+        
         # Anchor search region (for visibility)
         sx, sy = _scale(img)
         exp_x = int(round(ANCHOR_BASE_X * sx))
@@ -839,6 +852,102 @@ def debug_ocr_region(img):
 
     except Exception as e:
         logger.debug(f"Debug OCR region failed: {e}")
+
+
+# Canonical map names for autocorrection
+MAP_CANONICAL_NAMES = [
+    "Extinction",
+    "Ragnarock",
+    "Astraeos",
+    "Aberration",
+    "The Island",
+    "Scorched Earth",
+    "The Center",
+]
+
+def _normalize_key(s: str) -> str:
+    return re.sub(r"\s+", "", s or "").lower()
+
+def autocorrect_map_name(name: str) -> str:
+    try:
+        key = _normalize_key(name)
+        if not key:
+            return name.strip()
+        best = None
+        best_score = 0.0
+        for cand in MAP_CANONICAL_NAMES:
+            score = difflib.SequenceMatcher(None, key, _normalize_key(cand)).ratio()
+            if score > best_score:
+                best_score = score
+                best = cand
+        # Require a reasonable similarity to avoid wrong corrections
+        if best and best_score >= 0.6:
+            return best
+        return name.strip()
+    except Exception:
+        return name.strip()
+
+
+def ocr_who_from_map(img: Image.Image) -> str | None:
+    """OCR the configured map area and assign the result to global 'who'.
+    Saves the crop for debugging in debug_screens/who_map_area.png
+    Returns the detected string or None.
+    """
+    global who, WHO_LOCKED
+    try:
+        # Scale-aware rect with UI offset
+        l, t, r, b = srect(img, *MAP_AREA_BASE_RECT)
+        crop = img.crop((l, t, r, b)).convert("L")
+        # light preprocessing for OCR
+        crop = ImageOps.autocontrast(crop)
+        crop = crop.filter(ImageFilter.MedianFilter())
+        save_debug_image(crop, "who_map_area", keep_only_latest=True)
+
+        # favor a single line; allow letters, digits, spaces and a few separators
+        cfg = (
+            "--oem 3 --psm 7 -l eng "
+            "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -c preserve_interword_spaces=1"
+        )
+        raw = pytesseract.image_to_string(crop, config=cfg)
+        text = raw.strip()
+        # normalize whitespace
+        text = re.sub(r"[\n\r\t]+", " ", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
+
+        # Ensure word-number separation by a single space
+        m = re.match(r"^(.*?)[\s_\-:]*([0-9]+)$", text)
+        if m:
+            left = m.group(1).strip()
+            right = m.group(2)
+            text = f"{left} {right}" if left else right
+        else:
+            text = re.sub(r"([A-Za-zÄÖÜäöüß])\s*([0-9])", r"\1 \2", text)
+            text = re.sub(r"([0-9])\s*([A-Za-zÄÖÜäöüß])", r"\1 \2", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
+
+        # sanity trims
+        if text:
+            # avoid extremely long usernames
+            text = text[:60]
+            # try to autocorrect known map names at the start of the string
+            parts = text.split(" ", 1)
+            if parts:
+                corrected = autocorrect_map_name(parts[0])
+                if len(parts) > 1:
+                    text = f"{corrected} {parts[1]}"
+                else:
+                    text = corrected
+
+            who = text
+            WHO_LOCKED = True
+            logger.info(f"WHO detected from map area: '{who}'")
+            return who
+        else:
+            logger.debug("WHO OCR returned empty text")
+            return None
+    except Exception as e:
+        logger.debug(f"ocr_who_from_map error: {e}")
+        return None
 
 
 def _fix_common_ocr_mistakes(s: str) -> str:
@@ -1409,6 +1518,10 @@ def main_loop():
                 logger.debug("Screenshot failed, retrying...")
                 time.sleep(5)
                 continue
+
+            # Detect 'who' dynamically from the map area once per run
+            if not WHO_LOCKED:
+                ocr_who_from_map(img)
 
             # Save debug OCR regions every 10 cycles for troubleshooting
             debug_counter += 1
