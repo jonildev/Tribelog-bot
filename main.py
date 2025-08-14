@@ -857,7 +857,7 @@ def debug_ocr_region(img):
 # Canonical map names for autocorrection
 MAP_CANONICAL_NAMES = [
     "Extinction",
-    "Ragnarock",
+    "Ragnarok",
     "Astraeos",
     "Aberration",
     "The Island",
