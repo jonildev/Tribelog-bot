@@ -1372,6 +1372,9 @@ def check_parasaur(img):
 SURGE_COOLDOWN_SECONDS = 10  # avoid spamming
 SURGE_RED_THRESHOLD = 0.05  # 5% of pixels in log area appear red-ish
 
+# --- Periodic status updates ---
+STATUS_UPDATE_INTERVAL_SECONDS = 600  # 10 minutes
+
 
 def _last_surge_time() -> float:
     state = _load_state()
@@ -1432,12 +1435,12 @@ def _chunk_text(text: str, limit: int = 1800) -> List[str]:
     return chunks or [""]
 
 
-def _send_webhook_once(url: str, content: str, image_path: Optional[str]) -> bool:
+def _send_webhook_once(url: str, content: str, image_path: Optional[str], username_override: Optional[str] = None) -> bool:
     try:
         webhook = DiscordWebhook(
             url=url,
             content=content,
-            username=who,
+            username=username_override if username_override else who,
             rate_limit_retry=True,  # library will honor Retry-After
             timeout=15,
         )
@@ -1465,7 +1468,7 @@ def _send_webhook_once(url: str, content: str, image_path: Optional[str]) -> boo
         return False
 
 
-def send_alert(message: str, image_path: Optional[str] = None) -> bool:
+def send_alert(message: str, image_path: Optional[str] = None, username_override: Optional[str] = None) -> bool:
     if not ALERT_WEBHOOK_URLS:
         logger.error("send_alert called but no webhook URLs configured")
         return False
@@ -1488,7 +1491,7 @@ def send_alert(message: str, image_path: Optional[str] = None) -> bool:
             delay = 2
             while attempts < 3 and not sent_this_chunk:
                 attempts += 1
-                if _send_webhook_once(url, chunk, attach_image):
+                if _send_webhook_once(url, chunk, attach_image, username_override=username_override):
                     sent_this_chunk = True
                     success_any = True
                     break
@@ -1504,6 +1507,8 @@ def main_loop():
     failed_attempts = 0
     quick_retries = 0
     last_parasaur_alert = 0  # Track parasaur alert cooldown
+    last_status_update = 0  # Track 10-minute status update cadence
+    status_update_count = 0  # Number of status updates sent successfully
     debug_counter = 0  # For periodic debug saves
 
     while True:
@@ -1621,8 +1626,22 @@ def main_loop():
                         logger.error("âœ— Failed to send tribelog screenshot update")
                 else:
                     logger.info("No new changes detected")
+
             else:
                 logger.debug("Viewing old logs - skipping change detection")
+
+            # Periodic 10-minute status update (global)
+            if (time.time() - last_status_update) >= STATUS_UPDATE_INTERVAL_SECONDS:
+                status_name = f"{who} - Status Update"
+                status_msg = f"<t:{int(time.time())}:T>"
+                # Always include image starting from the first update
+                image_path = create_log_report(img)
+                if send_alert(status_msg, image_path=image_path, username_override=status_name):
+                    last_status_update = time.time()
+                    status_update_count += 1
+                    logger.info("✓ Sent periodic status update")
+                else:
+                    logger.error("Failed to send periodic status update")
 
             # Dynamic sleep based on activity
             if viewing_old_logs:
