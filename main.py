@@ -1466,7 +1466,11 @@ def _send_webhook_once(url: str, content: str, image_path: Optional[str], userna
     except Exception as e:
         logger.error(f"Webhook exception: {e}")
         return False
-
+    
+def trigger_raid_alert(server, role_id, repeat=9):
+    message = f"{role_id} 🚨 RAID ALERT! Server: {server} 🚨"
+    for _ in range(repeat):
+        send_alert(message)
 
 def send_alert(message: str, image_path: Optional[str] = None, username_override: Optional[str] = None) -> bool:
     if not ALERT_WEBHOOK_URLS:
@@ -1610,6 +1614,9 @@ def main_loop():
                         logger.warning(msg)
                         send_alert(msg)
                         _update_last_surge_time(current_time)
+                if red_ratio >= 0.07:
+                    trigger_raid_alert(who, ROLE_MENTION)
+
 
             # Check for log changes (only when viewing current logs)
             if not viewing_old_logs:
